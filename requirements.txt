@@ -1,5 +1,5 @@
 fastapi[all]
-pinecone_client
+pinecone-client==2.2.4
 openai==1.3.3
 langchain==0.0.300
 tiktoken
