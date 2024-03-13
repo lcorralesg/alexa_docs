@@ -27,15 +27,3 @@ def search(q: str):
         context.append(doc.page_content)
 
     return context
-
-@app.get("/places")
-def places():
-    with open("places.json") as f:
-        places = json.load(f)
-    return places
-
-@app.get("/libros")
-def libros():
-    with open("libros.json") as f:
-        libros = json.load(f)
-    return libros
