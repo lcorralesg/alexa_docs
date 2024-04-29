@@ -1,29 +1,69 @@
-from typing import Optional
-from fastapi import FastAPI
+import io
 import json
-from langchain.vectorstores.pinecone import Pinecone
-from langchain.embeddings import OpenAIEmbeddings
-from openai import OpenAI
-import pinecone
 import os
+
+from fastapi import FastAPI, File, UploadFile
+from langchain.document_loaders import PyPDFDirectoryLoader
+from langchain.embeddings import OpenAIEmbeddings
+from langchain.text_splitter import CharacterTextSplitter
+from langchain.vectorstores.pinecone import Pinecone
+from openai import OpenAI
+from PyPDF2 import PdfReader
+from typing import Optional
+
+import pinecone
 
 app = FastAPI()
 
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+PINECONE_API_KEY = os.environ["PINECONE_API_KEY"]
 
-@app.get("/")
-async def root():
-    return {"message": "Hello World"}
-
+pinecone.init(api_key = PINECONE_API_KEY, environment = "gcp-starter")
 
 @app.get("/search/{q}")
-def search(q: str):
-    pinecone.init(api_key = "991f3d3f-17f2-47b3-bb46-fa7d3363226a", environment = "us-west4-gcp-free")
+async def search(q: str):
     embeddings = OpenAIEmbeddings()
-    docsearch = Pinecone.from_existing_index("langchain-demo", embeddings)
+    docsearch = Pinecone.from_existing_index("alexa", embeddings)
     context = []
     docs = docsearch.similarity_search(q)
     for doc in docs:
         context.append(doc.page_content)
 
     return context
+
+class Document:
+    def __init__(self, page_content, metadata=None):
+        self.page_content = page_content
+        self.metadata = metadata if metadata is not None else {}
+
+@app.post("/uploadfile/")
+async def uploadfile(file: UploadFile = File(...)):
+    if file.filename.endswith('.pdf'):
+        contents = await file.read()
+        pdf_file = io.BytesIO(contents)
+        pdf_reader = PdfReader(pdf_file)
+        chunk_size = 1000  # Define el tamaño de los fragmentos
+
+        documents = []  # Lista para almacenar los objetos Document
+
+        for page_num in range(len(pdf_reader.pages)):
+            page_text = pdf_reader.pages[page_num].extract_text()
+
+            # Dividir el texto de la página en fragmentos
+            start = 0
+            while start < len(page_text):
+                tmp_end = min(start + chunk_size, len(page_text))
+                dot_pos = page_text[:tmp_end].rfind('.')
+                space_pos = page_text[:tmp_end].rfind(' ')
+                change = tmp_end != len(page_text)
+                end = max(dot_pos, space_pos) if change else tmp_end
+
+                # Crear un objeto Document con el fragmento de texto y añadirlo a la lista
+                documents.append(Document(page_content=page_text[start:end]))
+
+                # Actualizar el inicio para el próximo fragmento
+                start = end + 1
+
+        vectorstore = Pinecone.from_documents(documents, OpenAIEmbeddings(), index_name="alexa")
+
+    return {"filename": file.filename, "text": [doc.page_content for doc in documents]}
