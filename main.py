@@ -13,16 +13,17 @@ from openai import OpenAI
 from PyPDF2 import PdfReader
 from typing import Optional
 
-import pinecone
 import boto3
+import dotenv
 
 app = FastAPI()
 
+dotenv.load_dotenv()
 
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 PINECONE_API_KEY = os.environ["PINECONE_API_KEY"]
 
-pinecone.init(api_key = PINECONE_API_KEY, environment = "gcp-starter")
+pinecone.init(api_key = PINECONE_API_KEY, environment = "us-west4-gcp-free")
 
 # DynamoDB configuration
 AWS_ACCESS_KEY_ID = os.environ["AWS_ACCESS_KEY_ID"]
@@ -32,7 +33,7 @@ AWS_DEFAULT_REGION = os.environ["AWS_DEFAULT_REGION"]
 dynamodb_client = boto3.client("dynamodb")
 dynamodb_resource = boto3.resource("dynamodb")
 
-def insert_data(question):
+def insert_question(question):
     clean_question = question.replace("_", " ")
     table = dynamodb_resource.Table('Preguntas')
     response = table.scan()
@@ -46,8 +47,22 @@ def insert_data(question):
         }
     )
 
-def get_all_data():
-    table = dynamodb_resource.Table('Preguntas')
+def insert_file(file_name, file_type):
+    table = dynamodb_resource.Table('Archivos')
+    response = table.scan()
+    unix_timestamp = int(time.time())
+    items = response['Items']
+    table.put_item(
+        Item={
+            'id': str(len(items) + 1),
+            'Nombre': file_name,
+            'Tipo': file_type,
+            'Timestamp': str(unix_timestamp)
+        }
+    )
+
+def get_all_data(table_name):
+    table = dynamodb_resource.Table(table_name)
     response = table.scan()
     items = response['Items']
     return items
@@ -63,13 +78,26 @@ def convert_timestamp(timestamp):
 
 @app.get("/questions/")
 async def questions():
-    data = get_all_data()
+    data = get_all_data('Preguntas')
     decoded_data = []
     for item in data:
         decoded_data.append({
             "id": item["id"],
             #Añadir los signos de pregunta
             "Pregunta": '¿' + item["Pregunta"] + '?',
+            "Timestamp": convert_timestamp(item["Timestamp"])
+        })
+    return decoded_data
+
+@app.get("/files/")
+async def files():
+    data = get_all_data('Archivos')
+    decoded_data = []
+    for item in data:
+        decoded_data.append({
+            "id": item["id"],
+            "Nombre": item["Nombre"],
+            "Tipo": item["Tipo"],
             "Timestamp": convert_timestamp(item["Timestamp"])
         })
     return decoded_data
@@ -83,7 +111,7 @@ async def search(q: str):
     for doc in docs:
         context.append(doc.page_content)
 
-    insert_data(q)
+    insert_question(q)
 
     return context
 
@@ -115,11 +143,13 @@ async def uploadfile(file: UploadFile = File(...)):
                 end = max(dot_pos, space_pos) if change else tmp_end
 
                 # Crear un objeto Document con el fragmento de texto y añadirlo a la lista
-                documents.append(Document(page_content=page_text[start:end]))
+                documents.append(Document(page_content=page_text[start:end], metadata={"file": file.filename, "page": page_num}))
 
                 # Actualizar el inicio para el próximo fragmento
                 start = end + 1
 
-        vectorstore = Pinecone.from_documents(documents, OpenAIEmbeddings(), index_name="alexa")
+        vectorstore = Pinecone.from_documents(documents, OpenAIEmbeddings(), index_name="langchain-demo")
 
-    return {"filename": file.filename, "text": [doc.page_content for doc in documents]}
+        insert_file(file.filename, "PDF")
+
+    return {"filename": file.filename}
