@@ -103,7 +103,7 @@ async def files():
 @app.get("/search/{q}")
 async def search(q: str):
     embeddings = OpenAIEmbeddings()
-    docsearch = Pinecone.from_existing_index("alexa", embeddings)
+    docsearch = Pinecone.from_existing_index("langchain-demo", embeddings)
     context = []
     docs = docsearch.similarity_search(q)
     for doc in docs:
