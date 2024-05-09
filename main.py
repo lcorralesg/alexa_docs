@@ -14,11 +14,9 @@ from PyPDF2 import PdfReader
 from typing import Optional
 
 import boto3
-import dotenv
+import pinecone
 
 app = FastAPI()
-
-dotenv.load_dotenv()
 
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 PINECONE_API_KEY = os.environ["PINECONE_API_KEY"]
