@@ -25,7 +25,7 @@ pinecone.init(api_key = PINECONE_API_KEY, environment = "gcp-starter")
 # DynamoDB configuration
 AWS_ACCESS_KEY_ID = os.environ["AWS_ACCESS_KEY_ID"]
 AWS_SECRET_ACCESS_KEY = os.environ["AWS_SECRET_ACCESS_KEY"]
-REGION_NAME = os.environ["REGION_NAME"]
+AWS_DEFAULT_REGION = os.environ["AWS_DEFAULT_REGION"]
 
 dynamodb_client = boto3.client("dynamodb")
 dynamodb_resource = boto3.resource("dynamodb")
