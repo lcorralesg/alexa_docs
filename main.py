@@ -30,8 +30,8 @@ AWS_DEFAULT_REGION = os.environ["AWS_DEFAULT_REGION"]
 dynamodb_client = boto3.client("dynamodb")
 dynamodb_resource = boto3.resource("dynamodb")
 
-
 def insert_data(question):
+    clean_question = question.replace(" ", "_")
     table = dynamodb_resource.Table('Preguntas')
     response = table.scan()
     unix_timestamp = int(time.time())
@@ -39,7 +39,7 @@ def insert_data(question):
     table.put_item(
         Item={
             'id': str(len(items) + 1),
-            'Pregunta': question,
+            'Pregunta': clean_question,
             'Timestamp': str(unix_timestamp)
         }
     )
@@ -59,9 +59,7 @@ async def search(q: str):
     for doc in docs:
         context.append(doc.page_content)
 
-    pregunta = q
-
-    insert_data(pregunta)
+    insert_data(q)
 
     return context
 
