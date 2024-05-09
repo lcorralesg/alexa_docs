@@ -2,6 +2,7 @@ import io
 import json
 import os
 import time
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI, File, UploadFile
 from langchain.document_loaders import PyPDFDirectoryLoader
@@ -16,6 +17,7 @@ import pinecone
 import boto3
 
 app = FastAPI()
+
 
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 PINECONE_API_KEY = os.environ["PINECONE_API_KEY"]
@@ -49,6 +51,28 @@ def get_all_data():
     response = table.scan()
     items = response['Items']
     return items
+
+def convert_timestamp(timestamp):
+    # Convertir el timestamp a datetime
+    dt = datetime.utcfromtimestamp(int(timestamp))
+    # Ajustar la hora a la zona horaria de Colombia (GMT-5)
+    local_dt = dt - timedelta(hours=5)
+    # Formatear la fecha y hora
+    formatted_dt = local_dt.strftime('%d-%m-%Y %H:%M:%S')
+    return formatted_dt
+
+@app.get("/questions/")
+async def questions():
+    data = get_all_data()
+    decoded_data = []
+    for item in data:
+        decoded_data.append({
+            "id": item["id"],
+            #Añadir los signos de pregunta
+            "Pregunta": '¿' + item["Pregunta"] + '?',
+            "Timestamp": convert_timestamp(item["Timestamp"])
+        })
+    return decoded_data
 
 @app.get("/search/{q}")
 async def search(q: str):
