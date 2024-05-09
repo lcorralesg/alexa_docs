@@ -31,7 +31,7 @@ dynamodb_client = boto3.client("dynamodb")
 dynamodb_resource = boto3.resource("dynamodb")
 
 def insert_data(question):
-    clean_question = question.replace(" ", "_")
+    clean_question = question.replace("_", " ")
     table = dynamodb_resource.Table('Preguntas')
     response = table.scan()
     unix_timestamp = int(time.time())
