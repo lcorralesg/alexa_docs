@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import time
 
 from fastapi import FastAPI, File, UploadFile
 from langchain.document_loaders import PyPDFDirectoryLoader
@@ -12,6 +13,7 @@ from PyPDF2 import PdfReader
 from typing import Optional
 
 import pinecone
+import boto3
 
 app = FastAPI()
 
@@ -19,6 +21,34 @@ OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 PINECONE_API_KEY = os.environ["PINECONE_API_KEY"]
 
 pinecone.init(api_key = PINECONE_API_KEY, environment = "gcp-starter")
+
+# DynamoDB configuration
+AWS_ACCESS_KEY_ID = os.environ["AWS_ACCESS_KEY_ID"]
+AWS_SECRET_ACCESS_KEY = os.environ["AWS_SECRET_ACCESS_KEY"]
+AWS_DEFAULT_REGION = os.environ["REGION_NAME"]
+
+dynamodb_client = boto3.client("dynamodb")
+dynamodb_resource = boto3.resource("dynamodb")
+
+
+def insert_data(question):
+    table = dynamodb_resource.Table('Preguntas')
+    response = table.scan()
+    unix_timestamp = int(time.time())
+    items = response['Items']
+    table.put_item(
+        Item={
+            'id': str(len(items) + 1),
+            'Pregunta': question,
+            'Timestamp': str(unix_timestamp)
+        }
+    )
+
+def get_all_data():
+    table = dynamodb_resource.Table('Preguntas')
+    response = table.scan()
+    items = response['Items']
+    return items
 
 @app.get("/search/{q}")
 async def search(q: str):
@@ -28,6 +58,10 @@ async def search(q: str):
     docs = docsearch.similarity_search(q)
     for doc in docs:
         context.append(doc.page_content)
+
+    pregunta = q
+
+    insert_data(pregunta)
 
     return context
 
