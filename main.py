@@ -18,6 +18,28 @@ AWS_DEFAULT_REGION = os.environ["AWS_DEFAULT_REGION"]
 dynamodb_client = boto3.client("dynamodb")
 dynamodb_resource = boto3.resource("dynamodb")
 
+def create_table(table_name):
+    table = dynamodb_resource.create_table(
+        TableName=table_name,
+        KeySchema=[
+            {
+                'AttributeName': 'id',
+                'KeyType': 'HASH'
+            }
+        ],
+        AttributeDefinitions=[
+            {
+                'AttributeName': 'id',
+                'AttributeType': 'S'
+            }
+        ],
+        ProvisionedThroughput={
+            'ReadCapacityUnits': 5,
+            'WriteCapacityUnits': 5
+        }
+    )
+    table.meta.client.get_waiter('table_exists').wait(TableName=table_name)
+
 def insert_question(question):
     clean_question = question.replace("_", " ")
     table = dynamodb_resource.Table('Preguntas')
@@ -43,6 +65,19 @@ def insert_file(file_name, file_type, file_pages):
             'Nombre': file_name,
             'Paginas': file_pages,
             'Tipo': file_type,
+            'Timestamp': str(unix_timestamp)
+        }
+    )
+
+def insert_rating(rating):
+    table = dynamodb_resource.Table('Puntuaciones')
+    response = table.scan()
+    unix_timestamp = int(time.time())
+    items = response['Items']
+    table.put_item(
+        Item={
+            'id': str(len(items) + 1),
+            'Puntuacion': rating,
             'Timestamp': str(unix_timestamp)
         }
     )
@@ -122,7 +157,11 @@ async def uploadfile(file: UploadFile = File(...)):
         insert_file(file.filename, file.content_type, len(pdf_reader.pages))
 
         return {"message": "File uploaded successfully"}
-    
+
+@app.post("/rate/")
+async def rate(rating: int):
+    insert_rating(rating)
+    return {"message": "Rating added successfully"}
 
 @app.get("/search/{q}")
 async def search(q: str):
