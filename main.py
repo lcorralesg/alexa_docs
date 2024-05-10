@@ -1,29 +1,19 @@
-import io
-import json
-import os
+from fastapi import FastAPI, File, UploadFile
+from pinecone import Pinecone, ServerlessSpec
+from langchain_openai import OpenAIEmbeddings
+from langchain_pinecone import PineconeVectorStore
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 import time
+import io
+from PyPDF2 import PdfReader
+import os
+import dotenv
+import boto3
 from datetime import datetime, timedelta
 
-from fastapi import FastAPI, File, UploadFile
-from langchain.document_loaders import PyPDFDirectoryLoader
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.text_splitter import CharacterTextSplitter
-from langchain.vectorstores.pinecone import Pinecone
-from openai import OpenAI
-from PyPDF2 import PdfReader
-from typing import Optional
-
-import boto3
-import pinecone
-
-app = FastAPI()
+dotenv.load_dotenv()
 
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
-PINECONE_API_KEY = os.environ["PINECONE_API_KEY"]
-
-pinecone.init(api_key = PINECONE_API_KEY, environment = "us-west4-gcp-free")
-
-# DynamoDB configuration
 AWS_ACCESS_KEY_ID = os.environ["AWS_ACCESS_KEY_ID"]
 AWS_SECRET_ACCESS_KEY = os.environ["AWS_SECRET_ACCESS_KEY"]
 AWS_DEFAULT_REGION = os.environ["AWS_DEFAULT_REGION"]
@@ -45,7 +35,7 @@ def insert_question(question):
         }
     )
 
-def insert_file(file_name, file_type):
+def insert_file(file_name, file_type, file_pages):
     table = dynamodb_resource.Table('Archivos')
     response = table.scan()
     unix_timestamp = int(time.time())
@@ -54,6 +44,7 @@ def insert_file(file_name, file_type):
         Item={
             'id': str(len(items) + 1),
             'Nombre': file_name,
+            'Paginas': file_pages,
             'Tipo': file_type,
             'Timestamp': str(unix_timestamp)
         }
@@ -73,6 +64,82 @@ def convert_timestamp(timestamp):
     # Formatear la fecha y hora
     formatted_dt = local_dt.strftime('%d-%m-%Y %H:%M:%S')
     return formatted_dt
+
+app = FastAPI()
+
+pc = Pinecone(
+    api_key=os.environ.get("PINECONE_API_KEY") or 'PINECONE_API_KEY'
+)
+
+def load_or_create_embeddings_index(index_name, chunks, namespace):
+    if index_name in pc.list_indexes().names():
+        print(f'Index {index_name} already exists. Loading embeddings...', end='')
+        vector_store = PineconeVectorStore.from_documents(
+        documents=chunks, embedding=OpenAIEmbeddings(), index_name=index_name, namespace=namespace)
+        
+        while not pc.describe_index(index_name).status['ready']:
+            time.sleep(1)
+        
+        print('Done')
+    else:
+        print(f'Creating index {index_name} and embeddings ...', end = '')
+        pc.create_index(name=index_name, dimension=1536, metric='cosine',  spec=ServerlessSpec(
+                cloud='aws',
+                region='us-east-1'
+            ))
+        
+        while not pc.describe_index(index_name).status['ready']:
+            time.sleep(1)
+        # Add to vectorDB using LangChain 
+        vector_store = PineconeVectorStore.from_documents(
+        documents=chunks, embedding=OpenAIEmbeddings(), index_name=index_name, namespace=namespace)
+        print('Done')   
+    return vector_store
+
+class Document:
+    def __init__(self, page_content, metadata=None):
+        self.page_content = page_content
+        self.metadata = metadata if metadata is not None else {}
+
+@app.post("/uploadfile/")
+async def uploadfile(file: UploadFile = File(...)):
+    if file.filename.endswith('.pdf'):
+        contents = await file.read()
+        pdf_file = io.BytesIO(contents)
+        pdf_reader = PdfReader(pdf_file)
+        text_splitter = RecursiveCharacterTextSplitter( 
+            chunk_size=1000,  # Maximum size of each chunk
+            chunk_overlap=100,  # Number of overlapping characters between chunks
+        )
+
+        documents = []
+        for page_num in range(len(pdf_reader.pages)):
+            page_content = pdf_reader.pages[page_num].extract_text()
+            documents.append(Document(page_content, metadata={'filename': file.filename, 'page_num': page_num}))
+
+        chunks = text_splitter.split_documents(documents)
+        index_name = 'alexa'
+        namespace = 'alexa-pdf'
+
+        vector_store = load_or_create_embeddings_index(index_name, chunks, namespace)
+        insert_file(file.filename, file.content_type, len(pdf_reader.pages))
+
+        return {"message": "File uploaded successfully"}
+    
+
+@app.get("/search/{q}")
+async def search(q: str):
+    embeddings = OpenAIEmbeddings()
+    
+    docsearch = PineconeVectorStore.from_existing_index("alexa", embeddings, namespace="alexa-pdf")
+    context = []
+    docs = docsearch.similarity_search(q)
+    for doc in docs:
+        context.append(doc.page_content)
+
+    insert_question(q)
+
+    return context
 
 @app.get("/questions/")
 async def questions():
@@ -95,58 +162,11 @@ async def files():
         decoded_data.append({
             "id": item["id"],
             "Nombre": item["Nombre"],
+            "Paginas": item["Paginas"],
             "Tipo": item["Tipo"],
             "Timestamp": convert_timestamp(item["Timestamp"])
         })
     return decoded_data
-
-@app.get("/search/{q}")
-async def search(q: str):
-    embeddings = OpenAIEmbeddings()
-    docsearch = Pinecone.from_existing_index("langchain-demo", embeddings)
-    context = []
-    docs = docsearch.similarity_search(q)
-    for doc in docs:
-        context.append(doc.page_content)
-
-    insert_question(q)
-
-    return context
-
-class Document:
-    def __init__(self, page_content, metadata=None):
-        self.page_content = page_content
-        self.metadata = metadata if metadata is not None else {}
-
-@app.post("/uploadfile/")
-async def uploadfile(file: UploadFile = File(...)):
-    if file.filename.endswith('.pdf'):
-        contents = await file.read()
-        pdf_file = io.BytesIO(contents)
-        pdf_reader = PdfReader(pdf_file)
-        chunk_size = 1000  # Define el tamaño de los fragmentos
-
-        documents = []  # Lista para almacenar los objetos Document
-
-        for page_num in range(len(pdf_reader.pages)):
-            page_text = pdf_reader.pages[page_num].extract_text()
-
-            # Dividir el texto de la página en fragmentos
-            start = 0
-            while start < len(page_text):
-                tmp_end = min(start + chunk_size, len(page_text))
-                dot_pos = page_text[:tmp_end].rfind('.')
-                space_pos = page_text[:tmp_end].rfind(' ')
-                change = tmp_end != len(page_text)
-                end = max(dot_pos, space_pos) if change else tmp_end
-
-                # Crear un objeto Document con el fragmento de texto y añadirlo a la lista
-                documents.append(Document(page_content=page_text[start:end], metadata={"file": file.filename, "page": page_num}))
-
-                # Actualizar el inicio para el próximo fragmento
-                start = end + 1
-
-        vectorstore = Pinecone.from_documents(documents, OpenAIEmbeddings(), index_name="langchain-demo")
 
         insert_file(file.filename, "PDF")
 
