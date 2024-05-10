@@ -7,11 +7,8 @@ import time
 import io
 from PyPDF2 import PdfReader
 import os
-import dotenv
 import boto3
 from datetime import datetime, timedelta
-
-dotenv.load_dotenv()
 
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 AWS_ACCESS_KEY_ID = os.environ["AWS_ACCESS_KEY_ID"]
