@@ -14,6 +14,7 @@ OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 AWS_ACCESS_KEY_ID = os.environ["AWS_ACCESS_KEY_ID"]
 AWS_SECRET_ACCESS_KEY = os.environ["AWS_SECRET_ACCESS_KEY"]
 AWS_DEFAULT_REGION = os.environ["AWS_DEFAULT_REGION"]
+VECTORS = os.environ["VECTORS"]
 
 dynamodb_client = boto3.client("dynamodb")
 dynamodb_resource = boto3.resource("dynamodb")
@@ -66,6 +67,14 @@ def insert_file(file_name, file_type, file_pages):
             'Paginas': file_pages,
             'Tipo': file_type,
             'Timestamp': str(unix_timestamp)
+        }
+    )
+
+def delete_file(id):
+    table = dynamodb_resource.Table('Archivos')
+    table.delete_item(
+        Key={
+            'id': id
         }
     )
 
@@ -163,6 +172,18 @@ async def rate(rating: int):
     insert_rating(rating)
     return {"message": "Rating added successfully"}
 
+@app.get("/ratings/")
+async def ratings():
+    data = get_all_data('Puntuaciones')
+    decoded_data = []
+    for item in data:
+        decoded_data.append({
+            "id": item["id"],
+            "Puntuacion": item["Puntuacion"],
+            "Timestamp": convert_timestamp(item["Timestamp"])
+        })
+    return decoded_data
+
 @app.get("/search/{q}")
 async def search(q: str):
     embeddings = OpenAIEmbeddings()
@@ -203,3 +224,46 @@ async def files():
             "Timestamp": convert_timestamp(item["Timestamp"])
         })
     return decoded_data
+
+@app.get("/vectors_len/{file_name}")
+async def get_vectors(file_name: str):
+    index = pc.Index("alexa")
+    dummy_vector = [0 for _ in range(1536)]
+    ans = index.query(
+        vector=dummy_vector,
+        filter={
+            "filename":{'$eq':file_name}
+        },
+        top_k=100,
+        namespace='alexa-pdf'
+    )
+
+    longitud = len(ans['matches'])
+    return longitud
+
+def delete_vectors(file_name: str):
+    index = pc.Index("alexa")
+    dummy_vector = [0 for _ in range(1536)]
+    ans = index.query(
+        vector=dummy_vector,
+        filter={
+            "filename":{'$eq':file_name}
+        },
+        top_k=100,
+        namespace='alexa-pdf'
+    )
+
+    get_only_ids = lambda x: x['id']
+
+    ids = list(map(get_only_ids, ans['matches']))
+
+    index.delete(ids=ids, namespace='alexa-pdf')
+
+@app.post("/delete_file_vectors/{id}")
+async def delete_file_vectors(id: str):
+    data = get_all_data('Archivos')
+    for item in data:
+        if item["id"] == id:
+            delete_vectors(item["Nombre"])
+            delete_file(id)
+            return {"message": "File vectors deleted successfully"}
