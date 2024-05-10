@@ -164,7 +164,3 @@ async def files():
             "Timestamp": convert_timestamp(item["Timestamp"])
         })
     return decoded_data
-
-        insert_file(file.filename, "PDF")
-
-    return {"filename": file.filename}
