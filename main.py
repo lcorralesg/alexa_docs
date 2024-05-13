@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, status, HTTPException
 from pinecone import Pinecone, ServerlessSpec
 from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
@@ -68,6 +68,15 @@ def insert_file(file_name, file_type, file_pages):
             'Timestamp': str(unix_timestamp)
         }
     )
+
+def get_all_filenames():
+    table = dynamodb_resource.Table('Archivos')
+    response = table.scan()
+    items = response['Items']
+    filenames = []
+    for item in items:
+        filenames.append(item['Nombre'])
+    return filenames
 
 def delete_file(id):
     table = dynamodb_resource.Table('Archivos')
@@ -144,27 +153,31 @@ class Document:
 @app.post("/uploadfile/")
 async def uploadfile(file: UploadFile = File(...)):
     if file.filename.endswith('.pdf'):
-        contents = await file.read()
-        pdf_file = io.BytesIO(contents)
-        pdf_reader = PdfReader(pdf_file)
-        text_splitter = RecursiveCharacterTextSplitter( 
-            chunk_size=1000,  # Maximum size of each chunk
-            chunk_overlap=100,  # Number of overlapping characters between chunks
-        )
+        filenames = get_all_filenames()
+        if file.filename in filenames:
+            raise HTTPException(status_code=400, detail="File already exists")
+        else:
+            contents = await file.read()
+            pdf_file = io.BytesIO(contents)
+            pdf_reader = PdfReader(pdf_file)
+            text_splitter = RecursiveCharacterTextSplitter( 
+                chunk_size=1000,  # Maximum size of each chunk
+                chunk_overlap=100,  # Number of overlapping characters between chunks
+            )
 
-        documents = []
-        for page_num in range(len(pdf_reader.pages)):
-            page_content = pdf_reader.pages[page_num].extract_text()
-            documents.append(Document(page_content, metadata={'filename': file.filename, 'page_num': page_num}))
+            documents = []
+            for page_num in range(len(pdf_reader.pages)):
+                page_content = pdf_reader.pages[page_num].extract_text()
+                documents.append(Document(page_content, metadata={'filename': file.filename, 'page_num': page_num}))
 
-        chunks = text_splitter.split_documents(documents)
-        index_name = 'alexa'
-        namespace = 'alexa-pdf'
+            chunks = text_splitter.split_documents(documents)
+            index_name = 'alexa'
+            namespace = 'alexa-pdf'
 
-        vector_store = load_or_create_embeddings_index(index_name, chunks, namespace)
-        insert_file(file.filename, file.content_type, len(pdf_reader.pages))
+            vector_store = load_or_create_embeddings_index(index_name, chunks, namespace)
+            insert_file(file.filename, file.content_type, len(pdf_reader.pages))
 
-        return {"message": "File uploaded successfully"}
+            return {"message": "File uploaded successfully"}
 
 @app.post("/rate/")
 async def rate(rating: int):
