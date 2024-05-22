@@ -45,10 +45,10 @@ def insert_question(question):
     table = dynamodb_resource.Table('Preguntas')
     response = table.scan()
     unix_timestamp = int(time.time())
-    items = response['Items']
+    max_id = max(int(item['id']) for item in response['Items'])
     table.put_item(
         Item={
-            'id': str(len(items) + 1),
+            'id': str(max_id + 1),
             'Pregunta': clean_question,
             'Timestamp': str(unix_timestamp)
         }
@@ -58,10 +58,10 @@ def insert_file(file_name, file_type, file_pages):
     table = dynamodb_resource.Table('Archivos')
     response = table.scan()
     unix_timestamp = int(time.time())
-    items = response['Items']
+    max_id = max(int(item['id']) for item in response['Items'])
     table.put_item(
         Item={
-            'id': str(len(items) + 1),
+            'id': str(max_id + 1),
             'Nombre': file_name,
             'Paginas': file_pages,
             'Tipo': file_type,
@@ -90,10 +90,10 @@ def insert_rating(rating):
     table = dynamodb_resource.Table('Puntuaciones')
     response = table.scan()
     unix_timestamp = int(time.time())
-    items = response['Items']
+    max_id = max(int(item['id']) for item in response['Items'])
     table.put_item(
         Item={
-            'id': str(len(items) + 1),
+            'id': str(max_id + 1),
             'Puntuacion': rating,
             'Timestamp': str(unix_timestamp)
         }
@@ -111,7 +111,7 @@ def convert_timestamp(timestamp):
     # Ajustar la hora a la zona horaria de Colombia (GMT-5)
     local_dt = dt - timedelta(hours=5)
     # Formatear la fecha y hora
-    formatted_dt = local_dt.strftime('%d-%m-%Y %H:%M:%S')
+    formatted_dt = local_dt.strftime('%d-%m-%Y %H:%M')
     return formatted_dt
 
 app = FastAPI()
@@ -194,7 +194,8 @@ async def ratings():
             "Puntuacion": item["Puntuacion"],
             "Timestamp": convert_timestamp(item["Timestamp"])
         })
-    return decoded_data
+    sorted_data = sorted(decoded_data, key=lambda x: x["Timestamp"], reverse=True)
+    return sorted_data
 
 @app.get("/search/{q}")
 async def search(q: str):
@@ -221,7 +222,8 @@ async def questions():
             "Pregunta": '¿' + item["Pregunta"] + '?',
             "Timestamp": convert_timestamp(item["Timestamp"])
         })
-    return decoded_data
+    sorted_data = sorted(decoded_data, key=lambda x: x["Timestamp"], reverse=True)
+    return sorted_data
 
 @app.get("/files/")
 async def files():
@@ -235,7 +237,8 @@ async def files():
             "Tipo": item["Tipo"],
             "Timestamp": convert_timestamp(item["Timestamp"])
         })
-    return decoded_data
+    sorted_data = sorted(decoded_data, key=lambda x: x["Timestamp"], reverse=True)
+    return sorted_data
 
 @app.get("/vectors_len/{file_name}")
 async def get_vectors(file_name: str):
