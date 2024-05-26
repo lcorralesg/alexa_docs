@@ -188,7 +188,7 @@ def list_files_in_bucket(bucket_name):
 def insert_binary_file_into_bucket(bucket_name, binary_file, file_name):
     if bucket_name in [bucket['Name'] for bucket in s3.list_buckets()['Buckets']]:
         try:
-            s3.put_object(Bucket=bucket_name, Key=file_name, Body=binary_file)
+            s3.put_object(Bucket=bucket_name, Key=f'information_files/{file_name}', Body=binary_file)
             print(f"File {file_name} uploaded to bucket {bucket_name}")
         except Exception as e:
             print(f"Error uploading file: {e}")
@@ -198,7 +198,7 @@ def insert_binary_file_into_bucket(bucket_name, binary_file, file_name):
 def delete_file_from_bucket(bucket_name, file_name):
     if bucket_name in [bucket['Name'] for bucket in s3.list_buckets()['Buckets']]:
         try:
-            s3.delete_object(Bucket=bucket_name, Key=file_name)
+            s3.delete_object(Bucket=bucket_name, Key=f'information_files/{file_name}')
             print(f"File {file_name} deleted from bucket {bucket_name}")
         except Exception as e:
             print(f"Error deleting file: {e}")
@@ -248,7 +248,7 @@ async def uploadfile(file: UploadFile = File(...)):
             if bucket_name not in [bucket['Name'] for bucket in s3.list_buckets()['Buckets']]:
                 create_bucket(bucket_name)
             
-            insert_binary_file_into_bucket(bucket_name, contents, f'information_files/{file.filename}')
+            insert_binary_file_into_bucket(bucket_name, contents, file.filename)
 
             return {"message": "File uploaded successfully"}
 
