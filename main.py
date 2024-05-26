@@ -259,7 +259,8 @@ async def downloadfile(file_name: str):
     data = get_all_data('Archivos')
     for item in data:
         if item["Nombre"] == file_name:
-            return presigned_url(bucket_name, item["Nombre"])
+            # Al hacer un GET a este endpoint, se descarga el archivo
+            return RedirectResponse(presigned_url(bucket_name, item["Nombre"]))
     return {"message": "File not found"}
 
 @app.post("/rate/")
