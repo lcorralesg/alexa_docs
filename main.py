@@ -1,14 +1,19 @@
 from fastapi import FastAPI, File, UploadFile, status, HTTPException
+from fastapi.responses import RedirectResponse
 from pinecone import Pinecone, ServerlessSpec
 from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from botocore.exceptions import ClientError
 import time
 import io
 from PyPDF2 import PdfReader
 import os
 import boto3
 from datetime import datetime, timedelta
+import dotenv
+
+dotenv.load_dotenv()
 
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 AWS_ACCESS_KEY_ID = os.environ["AWS_ACCESS_KEY_ID"]
@@ -17,6 +22,8 @@ AWS_DEFAULT_REGION = os.environ["AWS_DEFAULT_REGION"]
 
 dynamodb_client = boto3.client("dynamodb")
 dynamodb_resource = boto3.resource("dynamodb")
+s3 = boto3.client('s3')
+bucket_name = os.environ["BUCKET_NAME"]
 
 def create_table(table_name):
     table = dynamodb_resource.create_table(
@@ -45,7 +52,10 @@ def insert_question(question):
     table = dynamodb_resource.Table('Preguntas')
     response = table.scan()
     unix_timestamp = int(time.time())
-    max_id = max(int(item['id']) for item in response['Items'])
+    if response['Items']:
+        max_id = max(int(item['id']) for item in response['Items'])
+    else:
+        max_id = 0
     table.put_item(
         Item={
             'id': str(max_id + 1),
@@ -58,7 +68,10 @@ def insert_file(file_name, file_type, file_pages):
     table = dynamodb_resource.Table('Archivos')
     response = table.scan()
     unix_timestamp = int(time.time())
-    max_id = max(int(item['id']) for item in response['Items'])
+    if response['Items']:
+        max_id = max(int(item['id']) for item in response['Items'])
+    else:
+        max_id = 0
     table.put_item(
         Item={
             'id': str(max_id + 1),
@@ -90,7 +103,10 @@ def insert_rating(rating):
     table = dynamodb_resource.Table('Puntuaciones')
     response = table.scan()
     unix_timestamp = int(time.time())
-    max_id = max(int(item['id']) for item in response['Items'])
+    if response['Items']:
+        max_id = max(int(item['id']) for item in response['Items'])
+    else:
+        max_id = 0
     table.put_item(
         Item={
             'id': str(max_id + 1),
@@ -145,6 +161,60 @@ def load_or_create_embeddings_index(index_name, chunks, namespace):
         print('Done')   
     return vector_store
 
+def create_bucket(bucket_name):
+    bucket_name = bucket_name.lower()
+    if bucket_name not in [bucket['Name'] for bucket in s3.list_buckets()['Buckets']]:
+        try:
+            s3.create_bucket(Bucket=bucket_name, CreateBucketConfiguration={
+                'LocationConstraint': AWS_DEFAULT_REGION
+            })
+            print(f"Bucket {bucket_name} created")
+        except Exception as e:
+            print(f"Error creating bucket: {e}")
+    else:
+        print(f"Bucket {bucket_name} already exists in the account")
+
+def list_files_in_bucket(bucket_name):
+    if bucket_name in [bucket['Name'] for bucket in s3.list_buckets()['Buckets']]:
+        try:
+            response = s3.list_objects_v2(Bucket=bucket_name)
+            if 'Contents' in response:
+                for obj in response['Contents']:
+                    print(obj['Key'])
+            else:
+                print(f"Bucket {bucket_name} is empty")
+        except Exception as e:
+            print(f"Error listing files: {e}")
+    else:
+        print(f"Bucket {bucket_name} does not exist in the account")
+    
+def insert_binary_file_into_bucket(bucket_name, binary_file, file_name):
+    if bucket_name in [bucket['Name'] for bucket in s3.list_buckets()['Buckets']]:
+        try:
+            s3.put_object(Bucket=bucket_name, Key=file_name, Body=binary_file)
+            print(f"File {file_name} uploaded to bucket {bucket_name}")
+        except Exception as e:
+            print(f"Error uploading file: {e}")
+    else:
+        print(f"Bucket {bucket_name} does not exist in the account")
+
+def delete_file_from_bucket(bucket_name, file_name):
+    if bucket_name in [bucket['Name'] for bucket in s3.list_buckets()['Buckets']]:
+        try:
+            s3.delete_object(Bucket=bucket_name, Key=file_name)
+            print(f"File {file_name} deleted from bucket {bucket_name}")
+        except Exception as e:
+            print(f"Error deleting file: {e}")
+    else:
+        print(f"Bucket {bucket_name} does not exist in the account")
+
+def presigned_url(bucket_name, object_name, expiration=3600):
+    try:
+        response = s3.generate_presigned_url('get_object', Params={'Bucket': bucket_name, 'Key': f'information_files/{object_name}'}, ExpiresIn=expiration)
+        return response
+    except ClientError as e:
+        print(f"Error generating presigned URL: {e}")
+
 class Document:
     def __init__(self, page_content, metadata=None):
         self.page_content = page_content
@@ -153,6 +223,8 @@ class Document:
 @app.post("/uploadfile/")
 async def uploadfile(file: UploadFile = File(...)):
     if file.filename.endswith('.pdf'):
+        if 'Archivos' not in dynamodb_client.list_tables()['TableNames']:
+            create_table('Archivos')
         filenames = get_all_filenames()
         if file.filename in filenames:
             raise HTTPException(status_code=400, detail="File already exists")
@@ -176,16 +248,35 @@ async def uploadfile(file: UploadFile = File(...)):
 
             vector_store = load_or_create_embeddings_index(index_name, chunks, namespace)
             insert_file(file.filename, file.content_type, len(pdf_reader.pages))
+            if bucket_name not in [bucket['Name'] for bucket in s3.list_buckets()['Buckets']]:
+                create_bucket(bucket_name)
+            
+            insert_binary_file_into_bucket(bucket_name, contents, f'information_files/{file.filename}')
 
             return {"message": "File uploaded successfully"}
 
+@app.get("/downloadfile/{file_name}")
+async def downloadfile(file_name: str):
+    if 'Archivos' not in dynamodb_client.list_tables()['TableNames']:
+        return {"message": "No files table found, upload a file first"}
+    data = get_all_data('Archivos')
+    for item in data:
+        if item["Nombre"] == file_name:
+            return presigned_url(bucket_name, item["Nombre"])
+    return {"message": "File not found"}
+
 @app.post("/rate/")
 async def rate(rating: int):
+    #Si no existe la tabla, crearla
+    if 'Puntuaciones' not in dynamodb_client.list_tables()['TableNames']:
+        create_table('Puntuaciones')
     insert_rating(rating)
-    return {"message": "Rating added successfully"}
+    return {"message": "Rating inserted successfully"}
 
 @app.get("/ratings/")
 async def ratings():
+    if 'Puntuaciones' not in dynamodb_client.list_tables()['TableNames']:
+        return {"message": "No ratings table found, post a rating first"}
     data = get_all_data('Puntuaciones')
     decoded_data = []
     for item in data:
@@ -207,12 +298,16 @@ async def search(q: str):
     for doc in docs:
         context.append(doc.page_content)
 
+    if 'Preguntas' not in dynamodb_client.list_tables()['TableNames']:
+        create_table('Preguntas')
     insert_question(q)
 
     return context
 
 @app.get("/questions/")
 async def questions():
+    if 'Preguntas' not in dynamodb_client.list_tables()['TableNames']:
+        return {"message": "No questions table found, post a question first"}
     data = get_all_data('Preguntas')
     decoded_data = []
     for item in data:
@@ -227,6 +322,8 @@ async def questions():
 
 @app.get("/files/")
 async def files():
+    if 'Archivos' not in dynamodb_client.list_tables()['TableNames']:
+        return {"message": "No files table found, upload a file first"}
     data = get_all_data('Archivos')
     decoded_data = []
     for item in data:
@@ -281,4 +378,5 @@ async def delete_file_vectors(id: str):
         if item["id"] == id:
             delete_vectors(item["Nombre"])
             delete_file(id)
+            delete_file_from_bucket(bucket_name, item["Nombre"])
             return {"message": "File vectors deleted successfully"}
