@@ -10,7 +10,7 @@ import io
 from PyPDF2 import PdfReader
 import os
 import boto3
-from datetime import datetime, timedelta
+from datetime import datetime
 
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 AWS_ACCESS_KEY_ID = os.environ["AWS_ACCESS_KEY_ID"]
@@ -117,15 +117,6 @@ def get_all_data(table_name):
     response = table.scan()
     items = response['Items']
     return items
-
-def convert_timestamp(timestamp):
-    # Convertir el timestamp a datetime
-    dt = datetime.utcfromtimestamp(int(timestamp))
-    # Ajustar la hora a la zona horaria de Colombia (GMT-5)
-    local_dt = dt - timedelta(hours=5)
-    # Formatear la fecha y hora
-    formatted_dt = local_dt.strftime('%d-%m-%Y %H:%M')
-    return formatted_dt
 
 app = FastAPI()
 
@@ -281,9 +272,11 @@ async def ratings():
         decoded_data.append({
             "id": item["id"],
             "Puntuacion": item["Puntuacion"],
-            "Timestamp": convert_timestamp(item["Timestamp"])
+            "Timestamp": datetime.fromtimestamp(int(item["Timestamp"]))
         })
     sorted_data = sorted(decoded_data, key=lambda x: x["Timestamp"], reverse=True)
+    for item in sorted_data:
+        item["Timestamp"] = item["Timestamp"].strftime("%d-%m-%Y %H:%M")
     return sorted_data
 
 @app.get("/search/{q}")
@@ -311,11 +304,12 @@ async def questions():
     for item in data:
         decoded_data.append({
             "id": item["id"],
-            #Añadir los signos de pregunta
             "Pregunta": '¿' + item["Pregunta"] + '?',
-            "Timestamp": convert_timestamp(item["Timestamp"])
+            "Timestamp": datetime.fromtimestamp(int(item["Timestamp"]))
         })
     sorted_data = sorted(decoded_data, key=lambda x: x["Timestamp"], reverse=True)
+    for item in sorted_data:
+        item["Timestamp"] = item["Timestamp"].strftime("%d-%m-%Y %H:%M")
     return sorted_data
 
 @app.get("/files/")
@@ -330,9 +324,11 @@ async def files():
             "Nombre": item["Nombre"],
             "Paginas": item["Paginas"],
             "Tipo": item["Tipo"],
-            "Timestamp": convert_timestamp(item["Timestamp"])
+            "Timestamp": datetime.fromtimestamp(int(item["Timestamp"]))
         })
     sorted_data = sorted(decoded_data, key=lambda x: x["Timestamp"], reverse=True)
+    for item in sorted_data:
+        item["Timestamp"] = item["Timestamp"].strftime("%d-%m-%Y %H:%M")
     return sorted_data
 
 @app.get("/vectors_len/{file_name}")
