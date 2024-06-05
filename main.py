@@ -11,6 +11,7 @@ from PyPDF2 import PdfReader
 import os
 import boto3
 from datetime import datetime
+import pytz
 
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 AWS_ACCESS_KEY_ID = os.environ["AWS_ACCESS_KEY_ID"]
@@ -268,11 +269,14 @@ async def ratings():
         return {"message": "No ratings table found, post a rating first"}
     data = get_all_data('Puntuaciones')
     decoded_data = []
+    lima_tz = pytz.timezone('America/Lima')
     for item in data:
+        utc_time = datetime.utcfromtimestamp(int(item["Timestamp"]))
+        lima_time = utc_time.replace(tzinfo=pytz.utc).astimezone(lima_tz)
         decoded_data.append({
             "id": item["id"],
             "Puntuacion": item["Puntuacion"],
-            "Timestamp": datetime.fromtimestamp(int(item["Timestamp"]))
+            "Timestamp": lima_time
         })
     sorted_data = sorted(decoded_data, key=lambda x: x["Timestamp"], reverse=True)
     for item in sorted_data:
@@ -301,11 +305,14 @@ async def questions():
         return {"message": "No questions table found, post a question first"}
     data = get_all_data('Preguntas')
     decoded_data = []
+    lima_tz = pytz.timezone('America/Lima')
     for item in data:
+        utc_time = datetime.utcfromtimestamp(int(item["Timestamp"]))
+        lima_time = utc_time.replace(tzinfo=pytz.utc).astimezone(lima_tz)
         decoded_data.append({
             "id": item["id"],
             "Pregunta": '¿' + item["Pregunta"] + '?',
-            "Timestamp": datetime.fromtimestamp(int(item["Timestamp"]))
+            "Timestamp": lima_time
         })
     sorted_data = sorted(decoded_data, key=lambda x: x["Timestamp"], reverse=True)
     for item in sorted_data:
