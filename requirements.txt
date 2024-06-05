@@ -7,3 +7,4 @@ openai==1.28.0
 pinecone-client==3.2.2
 langchain_openai==0.1.6
 langchain_pinecone==0.1.0
+pytz==2024.1
