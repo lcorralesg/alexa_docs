@@ -62,6 +62,23 @@ def insert_question(question):
         }
     )
 
+def insert_question_nr(question):
+    clean_question = question.replace("_", " ")
+    table = dynamodb_resource.Table('Preguntas_NR')
+    response = table.scan()
+    unix_timestamp = int(time.time())
+    if response['Items']:
+        max_id = max(int(item['id']) for item in response['Items'])
+    else:
+        max_id = 0
+    table.put_item(
+        Item={
+            'id': str(max_id + 1),
+            'Pregunta': clean_question,
+            'Timestamp': str(unix_timestamp)
+        }
+    )
+
 def insert_file(file_name, file_type, file_pages):
     table = dynamodb_resource.Table('Archivos')
     response = table.scan()
@@ -304,6 +321,33 @@ async def questions():
     if 'Preguntas' not in dynamodb_client.list_tables()['TableNames']:
         return {"message": "No questions table found, post a question first"}
     data = get_all_data('Preguntas')
+    decoded_data = []
+    lima_tz = pytz.timezone('America/Lima')
+    for item in data:
+        utc_time = datetime.utcfromtimestamp(int(item["Timestamp"]))
+        lima_time = utc_time.replace(tzinfo=pytz.utc).astimezone(lima_tz)
+        decoded_data.append({
+            "id": item["id"],
+            "Pregunta": '¿' + item["Pregunta"] + '?',
+            "Timestamp": lima_time
+        })
+    sorted_data = sorted(decoded_data, key=lambda x: x["Timestamp"], reverse=True)
+    for item in sorted_data:
+        item["Timestamp"] = item["Timestamp"].strftime("%d-%m-%Y %H:%M")
+    return sorted_data
+
+@app.post("/insert_question_nr/")
+async def insert_question_nr_endpoint(question: str):
+    if 'Preguntas_NR' not in dynamodb_client.list_tables()['TableNames']:
+        create_table('Preguntas_NR')
+    insert_question_nr(question)
+    return {"message": "Question inserted successfully"}
+
+@app.get("/questions_nr/")
+async def questions_nr():
+    if 'Preguntas_NR' not in dynamodb_client.list_tables()['TableNames']:
+        return {"message": "No questions table found, insert a question first"}
+    data = get_all_data('Preguntas_NR')
     decoded_data = []
     lima_tz = pytz.timezone('America/Lima')
     for item in data:
